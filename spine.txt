@@ -1,0 +1,165 @@
+conf t
+
+interface ethernet 1/1-54
+no shut
+mtu 9216
+
+nv overlay evpn
+feature bgp
+
+---BGP unnumbered---
+
+interface Ethernet1/49
+  ip forward
+  ipv6 link-local use-bia
+  no shutdown
+
+
+interface Ethernet1/50
+  ip forward
+  ipv6 link-local use-bia
+  no shutdown
+
+interface loopback0
+  description router-id
+  ip address 10.0.254.11/32
+
+route-map PERMIT_ALL permit 10
+
+router bgp 65011
+  router-id 10.0.254.11
+  bestpath as-path multipath-relax
+  address-family ipv4 unicast
+    redistribute direct route-map PERMIT_ALL
+    maximum-paths 64
+  address-family ipv6 unicast
+    maximum-paths 64
+  template peer downlink
+    remote-as external
+    address-family ipv4 unicast
+    address-family ipv6 unicast
+  neighbor Ethernet1/49
+    inherit peer downlink
+  neighbor Ethernet1/50
+    inherit peer downlink
+
+
+---Control Plane MP-BGP EVPN---
+
+
+route-map NEXT-HOP-UNCH permit 10
+  set ip next-hop unchanged
+
+router bgp 65011
+  address-family l2vpn evpn
+    retain route-target all
+  neighbor 10.0.254.0/24
+    remote-as external
+    update-source loopback0
+    ebgp-multihop 2
+    address-family l2vpn evpn
+      route-map NEXT-HOP-UNCH out
+      disable-peer-as-check
+      rewrite-evpn-rt-asn
+      send-community both
+      
+# next-hop unchangedのroute-mapの設定は必須
+# eBGPにて、あるネイバーから受け取った経路を別のネイバーに広報する際、Next Hopが自分に変更される
+# Spineの場合、Next Hopが自分として広報されるため、VTEPに到達できなくなる
+
+# https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/configuration/vxlan/cisco-nexus-9000-series-nx-os-vxlan-configuration-guide-release-105x/m_configuring_the_underlay.html#concept_r55_jfm_mfb
+# https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/configuration/vxlan/cisco-nexus-9000-series-nx-os-vxlan-configuration-guide-release-105x/m_configuring_vxlan_bgp_evpn.html#vxlan-bgp-evpn-with-rfc-5549-underlay
+
+
+# next-hop unchanged設定前
+# 10.0.254.11はSpineのLo0
+fx3-1(config)# sh forwarding 192.168.100.2/32 vrf vxlan-1001000
+
+slot  1
+=======
+
+
+IPv4 routes for table vxlan-1001000/base
+
+------------------+-----------------------------------------+----------------------+------
+-----------+-----------------
+Prefix            | Next-hop                                | Interface            | Label
+s          | Partial Install
+------------------+-----------------------------------------+----------------------+------
+-----------+-----------------
+192.168.100.2/32     10.0.254.11        nve1        vni:   1001000
+
+slot 27
+=======
+
+
+IPv4 routes for table vxlan-1001000/base
+
+------------------+-----------------------------------------+----------------------+------
+-----------+-----------------
+Prefix            | Next-hop                                | Interface            | Label
+s          | Partial Install
+------------------+-----------------------------------------+----------------------+------
+-----------+-----------------
+192.168.100.2/32     10.0.254.11        nve1        vni:   1001000
+
+
+# next-hop unchanged設定後
+# 10.0.255.2はfx3-2のVTEP
+
+
+fx3-1(config)# sh forwarding 192.168.100.2/32 vrf vxlan-1001000
+
+slot  1
+=======
+
+
+IPv4 routes for table vxlan-1001000/base
+
+------------------+-----------------------------------------+----------------------+------
+-----------+-----------------
+Prefix            | Next-hop                                | Interface            | Label
+s          | Partial Install
+------------------+-----------------------------------------+----------------------+------
+-----------+-----------------
+192.168.100.2/32     10.0.255.2         nve1        vni:   1001000
+
+slot 27
+=======
+
+
+IPv4 routes for table vxlan-1001000/base
+
+------------------+-----------------------------------------+----------------------+------
+-----------+-----------------
+Prefix            | Next-hop                                | Interface            | Label
+s          | Partial Install
+------------------+-----------------------------------------+----------------------+------
+-----------+-----------------
+192.168.100.2/32     10.0.255.2         nve1        vni:   1001000
+
+# retain route-taget allはeBGP環境でspineに必須
+# SpineにはVRFの設定がなく、RTもないので、このコマンドがないとRT付きのEVPN経路が広報されてもDropしてしまうため
+# https://community.cisco.com/t5/data-center-switches/why-vxlan-evpn-ebgp-needs-to-configure-quot-retain-route-target/td-p/4126609
+
+# ebgp-multihop 2はspine, leafに必須
+# Overlayのneighborはloopback IPなので、2hop離れているため
+# https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/configuration/vxlan/cisco-nexus-9000-series-nx-os-vxlan-configuration-guide-release-105x/m_configuring_the_underlay.html#concept_r55_jfm_mfb
+
+
+# disable-peer-as-checkはspine, leafに入れておいた方がいい
+# LeafのASNが全て同じパターンのeBGPでは、disable-peer-as-checkがspineに必要
+# Leaf1から広報された経路をLeaf2に広報する場合、ASNが同じなのでデフォルトでは広報されないため。vPC Pairで同じASNを使う場合でも必要
+# とりあえず入れておいた方が考慮漏れがない？
+# https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/configuration/vxlan/cisco-nexus-9000-series-nx-os-vxlan-configuration-guide-release-105x/m_configuring_vxlan_bgp_evpn.html#vxlan-bgp-evpn-with-rfc-5549-underlay
+
+# rewrite-evpn-rt-asnはroute-target both autoを使う場合spine, leafに必須
+# VTEP毎に異なるASNを持つので、route-target autoで生成されるRTもVTEP毎に異なる
+# RTが一致せず、経路をImportできない
+# rewrite-evpn-rt-asnにより、各スイッチはRTのASN部分を自身のASNで書き換えることにより、経路をImportできるようにする
+# https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/configuration/vxlan/cisco-nexus-9000-series-nx-os-vxlan-configuration-guide-release-105x/m_configuring_the_underlay.html#concept_r55_jfm_mfb
+
+
+#eBGPにはroute-reflectorという概念はない
+
+---

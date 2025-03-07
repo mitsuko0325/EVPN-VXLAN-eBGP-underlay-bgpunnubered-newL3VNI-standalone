@@ -1,0 +1,209 @@
+conf t
+
+interface ethernet 1/1-54
+no shut
+mtu 9216
+
+nv overlay evpn
+feature bgp
+feature interface-vlan
+feature vn-segment-vlan-based
+feature nv overlay
+
+---BGP unnumbered---
+
+interface Ethernet1/49
+  ip forward
+  ipv6 link-local use-bia
+  no shutdown
+
+
+interface loopback0
+  description router-id
+  ip address 10.0.254.1/32
+
+route-map PERMIT_ALL permit 10
+
+router bgp 65001
+  router-id 10.0.254.1
+  bestpath as-path multipath-relax
+  address-family ipv4 unicast
+    redistribute direct route-map PERMIT_ALL
+    maximum-paths 64
+  address-family ipv6 unicast
+    maximum-paths 64
+  template peer uplink
+    remote-as external
+    address-family ipv4 unicast
+    address-family ipv6 unicast
+  neighbor Ethernet1/33/1
+    inherit peer uplink
+  neighbor Ethernet1/33/2
+    inherit peer uplink
+
+
+router bgp 65002
+  router-id 10.0.254.2
+  bestpath as-path multipath-relax
+  address-family ipv4 unicast
+    redistribute direct route-map PERMIT_ALL
+    maximum-paths 64
+  address-family ipv6 unicast
+    maximum-paths 64
+  template peer uplink
+    remote-as external
+    address-family ipv4 unicast
+    address-family ipv6 unicast
+  neighbor Ethernet1/49
+    inherit peer uplink
+
+
+---Control Plane MP-BGP EVPN---
+
+router bgp 65001
+  neighbor 10.0.254.11
+    remote-as external
+    update-source lo 0
+    ebgp-multihop 2
+    address-family l2vpn evpn
+      send-community both
+      rewrite-evpn-rt-asn
+
+# ebgp-multihop 2は必須
+# Overlayのneighborはloopback IPなので、2hop離れているため
+https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/configuration/vxlan/cisco-nexus-9000-series-nx-os-vxlan-configuration-guide-release-105x/m_configuring_the_underlay.html#concept_r55_jfm_mfb
+
+
+# disable-peer-as-checkはspine, leafに入れておいた方がいい
+# LeafのASNが全て同じパターンのeBGPでは、disable-peer-as-checkがspineに必要
+# Leaf1から広報された経路をLeaf2に広報する場合、ASNが同じなのでデフォルトでは広報されないため。vPC Pairで同じASNを使う場合でも必要
+# とりあえず入れておいた方が考慮漏れがない？
+# https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/configuration/vxlan/cisco-nexus-9000-series-nx-os-vxlan-configuration-guide-release-105x/m_configuring_vxlan_bgp_evpn.html#vxlan-bgp-evpn-with-rfc-5549-underlay
+
+
+# rewrite-evpn-rt-asnはroute-target both autoを使う場合spine, leafに必須
+# VTEP毎に異なるASNを持つので、route-target autoで生成されるRTもVTEP毎に異なる
+# RTが一致せず、経路をImportできない
+# rewrite-evpn-rt-asnにより、各スイッチはRTのASN部分を自身のASNで書き換えることにより、経路をImportできるようにする
+# https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/configuration/vxlan/cisco-nexus-9000-series-nx-os-vxlan-configuration-guide-release-105x/m_configuring_the_underlay.html#concept_r55_jfm_mfb
+!!!まだ入れてない
+
+
+---Overlay VXLAN---
+
+vlan 100
+  vn-segment 100100
+
+vlan 200
+  vn-segment 100200
+
+vrf context vxlan-1001000
+  vni 1001000 l3
+  rd auto
+  address-family ipv4 unicast
+    route-target both auto
+    route-target both auto evpn
+
+# New L3VNI Mode
+# L3VNI用にSVIを作成する必要がなくなり、VLANの数やSVI分のリソースを削減することで、VNIの数などのScaleが向上している
+
+#https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/configuration/vxlan/cisco-nexus-9000-series-nx-os-vxlan-configuration-guide-release-105x/m_configuring_vxlan_bgp_evpn.html#vxlan-bgp-evpn-with-rfc-5549-underlay
+
+
+fabric forwarding anycast-gateway-mac 0000.2222.3333
+
+interface vlan 100
+  mtu 9216
+  vrf member vxlan-1001000
+  ip addr 192.168.100.254/24
+  fabric forwarding mode anycast-gateway
+  no shut
+
+interface vlan 200
+  mtu 9216
+  vrf member vxlan-1001000
+  ip addr 192.168.200.254/24
+  fabric forwarding mode anycast-gateway
+  no shut
+
+evpn
+  vni 100100 l2
+  vni 100200 l2
+  route-target both auto
+  rd auto
+
+interface lo 1
+  description VTEP
+  ip address 10.0.255.1/32
+  no shut
+
+interface nve 1
+  source-interface lo 1
+  host-reachability protocol bgp
+  member vni 100100
+    ingress-replication protocol bgp
+  member vni 100200
+    ingress-replication protocol bgp
+  member vni 1001000 associate-vrf
+  no shut
+
+
+---Downlink---
+
+interface Ethernet1/1
+ switchport
+ switchport access vlan 100
+ no shutdown
+
+interface Ethernet1/11
+ switchport
+ switchport access vlan 200
+ no shutdown
+
+
+
+---External Connectivity VRF-lite---
+
+interface Ethernet1/25.10
+  mtu 9216
+  encapsulation dot1q 10
+  vrf member vxlan-1001000
+  ip address 192.168.10.2/30
+  no shutdownq
+
+router bgp 65001
+  vrf vxlan-1001000
+    address-family ipv4 unicast
+      redistribute direct route-map PERMIT_ALL
+    neighbor 192.168.10.1
+      remote-as 65010
+      address-family ipv4 unicast
+        route-map extcon-rmap-filter out
+
+# redistribute directしないとこのleafに直接存在するsubnetが広報されない
+# 完全なborder leafの場合は不要だが、このLeafにもL2VNI, Type-5が存在する場合必要
+# vrf xxx->address-familuy ipv4 unicast->advertise l2vpn evpnは設定不要で明示的にenableとなっている
+# https://www.cisco.com/c/ja_jp/td/docs/switches/datacenter/nexus9000/sw/93x/vxlan/configuration/guide/b-cisco-nexus-9000-series-nx-os-vxlan-configuration-guide-93x/b-cisco-nexus-9000-series-nx-os-vxlan-configuration-guide-93x_chapter_0101.html
+
+
+# host-routesとdefault routeの広報を制限するroute-map
+# https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-vxlan-bgp-evpn-design-and-implementation-guide.html#VXLANBGPEVPNUnderlayUnicastRouting
+ip prefix-list default-route seq 5 permit 0.0.0.0/0
+ip prefix-list host-route seq 5 permit 0.0.0.0/0 eq 32
+
+route-map extcon-rmap-filter deny 10
+  match ip address prefix-list default-route
+route-map extcon-rmap-filter deny 20
+  match ip address prefix-list host-route
+route-map extcon-rmap-filter permit 1000
+
+
+
+---external-router---
+
+router bgp 65010
+  address-family ipv4 unicast
+    network 10.10.10.10/32
+  neighbor 192.168.10.2
+    remote-as 65001
+    address-family ipv4 unicast
