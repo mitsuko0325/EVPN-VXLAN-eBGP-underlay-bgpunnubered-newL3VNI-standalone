@@ -147,7 +147,7 @@ s          | Partial Install
 # https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/configuration/vxlan/cisco-nexus-9000-series-nx-os-vxlan-configuration-guide-release-105x/m_configuring_the_underlay.html#concept_r55_jfm_mfb
 
 
-# disable-peer-as-checkはspine, leafに入れておいた方がいい
+# disable-peer-as-checkはspineのみに設定
 # LeafのASNが全て同じパターンのeBGPでは、disable-peer-as-checkがspineに必要
 # Leaf1から広報された経路をLeaf2に広報する場合、ASNが同じなのでデフォルトでは広報されないため。vPC Pairで同じASNを使う場合でも必要
 # とりあえず入れておいた方が考慮漏れがない？
