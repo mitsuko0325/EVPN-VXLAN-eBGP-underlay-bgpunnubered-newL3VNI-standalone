@@ -77,9 +77,10 @@ https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/configuration/vxl
 
 
 # allowas-inはLeafのみに設定
-
+# eBGPで自分と同じASNからの経路を受信すると、デフォルトだとループ防止のためDropするが、それを許可する設定
+# vPCで、対向が同じASNを持つ場合などに必要
 # とりあえず入れておいた方が考慮漏れがない？
-
+https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/configuration/vxlan/cisco-nexus-9000-series-nx-os-vxlan-configuration-guide-release-105x/m_configuring_the_underlay.html#concept_r55_jfm_mfb
 
 # rewrite-evpn-rt-asnはroute-target both autoを使う場合spine, leafに必須
 # VTEP毎に異なるASNを持つので、route-target autoで生成されるRTもVTEP毎に異なる
