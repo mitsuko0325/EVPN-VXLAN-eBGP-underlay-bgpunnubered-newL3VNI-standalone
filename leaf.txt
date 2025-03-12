@@ -61,12 +61,14 @@ router bgp 65002
 ---Control Plane MP-BGP EVPN---
 
 router bgp 65001
-  neighbor 10.0.254.11
+   neighbor 10.0.254.11
     remote-as external
-    update-source lo 0
+    update-source loopback0
     ebgp-multihop 2
     address-family l2vpn evpn
-      send-community both
+      allowas-in 3
+      send-community
+      send-community extended
       rewrite-evpn-rt-asn
 
 # ebgp-multihop 2は必須
@@ -74,11 +76,9 @@ router bgp 65001
 https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/configuration/vxlan/cisco-nexus-9000-series-nx-os-vxlan-configuration-guide-release-105x/m_configuring_the_underlay.html#concept_r55_jfm_mfb
 
 
-# disable-peer-as-checkはspine, leafに入れておいた方がいい
-# LeafのASNが全て同じパターンのeBGPでは、disable-peer-as-checkがspineに必要
-# Leaf1から広報された経路をLeaf2に広報する場合、ASNが同じなのでデフォルトでは広報されないため。vPC Pairで同じASNを使う場合でも必要
+# allowas-inはLeafのみに設定
+
 # とりあえず入れておいた方が考慮漏れがない？
-# https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/configuration/vxlan/cisco-nexus-9000-series-nx-os-vxlan-configuration-guide-release-105x/m_configuring_vxlan_bgp_evpn.html#vxlan-bgp-evpn-with-rfc-5549-underlay
 
 
 # rewrite-evpn-rt-asnはroute-target both autoを使う場合spine, leafに必須
@@ -86,7 +86,10 @@ https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/configuration/vxl
 # RTが一致せず、経路をImportできない
 # rewrite-evpn-rt-asnにより、各スイッチはRTのASN部分を自身のASNで書き換えることにより、経路をImportできるようにする
 # https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/configuration/vxlan/cisco-nexus-9000-series-nx-os-vxlan-configuration-guide-release-105x/m_configuring_the_underlay.html#concept_r55_jfm_mfb
-!!!まだ入れてない
+
+
+# disable-peer-as-checkはspineのみに設定が必要
+
 
 
 ---Overlay VXLAN---
