@@ -1,3 +1,15 @@
+https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/configuration/vxlan/cisco-nexus-9000-series-nx-os-vxlan-configuration-guide-release-105x/m_configuring_vxlan_bgp_evpn.html#vxlan-bgp-evpn-with-rfc-5549-underlay%22
+
+BGP unnumbered Underlayには多数の制限がある
+普通に、OSPF Unnumbered使ったほうがいいね
+
+
+- New L3VNI Configはサポートされていない
+  - つまり、現状以下のConfigはサポートされていない
+- 外接ルーターとtenant VRFで、IPv4/IPv6/unnumbered全てでBGP Peeringがサポートされていない
+
+
+
 conf t
 
 interface ethernet 1/1-54
